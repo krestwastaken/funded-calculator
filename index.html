@@ -1,0 +1,606 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Funded Calculator — TradeDay | SmartPropFirm</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+
+<!--
+  DEV HANDOFF NOTES (not rendered):
+  - All figures below are pulled from SPF's TradeDay data file (per-plan
+    evaluation_rules / funded_rules / payout_rules), not third-party
+    review sites. computeRequiredProfit(): tiered for Quick Pay (50/50
+    under $4,000 net profit, 80/20 at/above — payout_split field),
+    flat 80/20 for Fast Pass.
+  - Consistency + trading-day gating only applies to Fast Pass Funded
+    Sim: 45% cap (funded_rules.consistency_rule), 5 profitable days
+    each clearing the size's daily minimum — $150/$200/$250
+    (payout_rules.minimum_days / minimum_profit_per_day). Quick Pay
+    Funded Sim has neither (consistency_rule is null, minimum_days
+    is 1 — day-one access).
+  - The split-curve visual only renders for Quick Pay. Fast Pass has
+    no tiers to plot, so it shows a one-line flat-split note instead
+    (#flatSplitNote) rather than a degenerate single-zone bar.
+  - Funded Live has two unrelated triggers, not one shared milestone:
+    Quick Pay reviews at $10,000 gross profit per account (excess
+    above it is removed); Fast Pass reviews at the 5th payout request
+    — a count, not a dollar figure (payout_rules.live_transition).
+  - FLAG FOR DATA TEAM: the source file's "clear_path_to_live" field
+    describes $5,000-increment reviews up to $20,000 with discretionary
+    review as early as the 3rd withdrawal — this conflicts with
+    "max_before_live" and the per-plan "live_transition" values, which
+    both say $10,000 (Quick Pay) / 5th payout (Fast Pass). This mockup
+    uses the latter. Worth reconciling before this ships.
+  - Ring/checklist = composite eligibility. Quick Pay has one condition
+    (profit). Fast Pass has three (profit, consistency, days); overall %
+    is the average of each condition's progress, eligible only at 100%
+    on all three.
+-->
+
+<style>
+  :root{
+    --bg:#0A0B0D;
+    --surface:#141519;
+    --surface-2:#1B1D22;
+    --border:#2A2C31;
+    --border-soft:#212327;
+    --text:#F3EFE6;
+    --text-dim:#9C978E;
+    --text-faint:#5E5A54;
+    --gold-dim:#7A6A3E;
+    --gold:#D8A54A;
+    --gold-bright:#F0C25A;
+    --gold-live:#FCEFC9;
+    --fail:#C97B6B;
+    --radius:16px;
+    --radius-sm:10px;
+    --font-display:'Space Grotesk',sans-serif;
+    --font-body:'Inter',sans-serif;
+    --font-mono:'IBM Plex Mono',monospace;
+  }
+
+  *{box-sizing:border-box;}
+  html{scroll-behavior:smooth;}
+  body{
+    margin:0;
+    background:
+      radial-gradient(ellipse 900px 500px at 50% -10%, rgba(216,165,74,0.08), transparent 60%),
+      var(--bg);
+    color:var(--text);
+    font-family:var(--font-body);
+    -webkit-font-smoothing:antialiased;
+  }
+  a{color:inherit;}
+  .page{max-width:1040px;margin:0 auto;padding:0 24px 80px;}
+
+  /* NAV */
+  .nav{display:flex;align-items:center;justify-content:space-between;padding:22px 0;border-bottom:1px solid var(--border-soft);margin-bottom:40px;}
+  .brand{display:flex;align-items:center;gap:10px;font-family:var(--font-display);font-weight:600;font-size:16px;}
+  .brand svg{width:20px;height:20px;flex-shrink:0;}
+  .nav-links{display:flex;gap:28px;font-size:14px;color:var(--text-dim);}
+  @media (max-width:640px){.nav-links{display:none;}}
+
+  /* HERO */
+  .breadcrumb{font-family:var(--font-mono);font-size:12px;color:var(--text-faint);text-transform:uppercase;letter-spacing:0.08em;margin-bottom:18px;}
+  .chip{font-family:var(--font-mono);font-size:12px;padding:6px 12px;border-radius:999px;border:1px solid var(--border);color:var(--text-dim);background:var(--surface);display:inline-block;margin-bottom:24px;}
+  .chip strong{color:var(--gold-bright);font-weight:500;}
+  h1{font-family:var(--font-display);font-weight:600;font-size:clamp(28px,4.2vw,42px);line-height:1.12;letter-spacing:-0.01em;margin:0 0 16px;max-width:20ch;}
+  h1 .accent{color:var(--gold-bright);}
+  .lede{font-size:16px;line-height:1.6;color:var(--text-dim);max-width:60ch;margin:0 0 48px;}
+
+  /* CARD */
+  .card{background:var(--surface);border:1px solid var(--border-soft);border-radius:var(--radius);padding:28px;margin-bottom:20px;}
+  .eyebrow{font-family:var(--font-mono);font-size:11px;letter-spacing:0.1em;text-transform:uppercase;color:var(--gold);display:block;margin-bottom:14px;}
+
+  /* SEGMENTED CONTROL */
+  .segmented{display:inline-flex;background:var(--surface-2);border:1px solid var(--border);border-radius:999px;padding:4px;gap:4px;}
+  .segmented button{font-family:var(--font-mono);font-size:12px;padding:9px 18px;border-radius:999px;border:none;background:transparent;color:var(--text-dim);cursor:pointer;transition:all .2s ease;}
+  .segmented button:hover{color:var(--text);}
+  .segmented button.active{background:var(--gold);color:#161206;font-weight:600;}
+
+  .setup-row{display:flex;flex-wrap:wrap;gap:36px;}
+  .field-group{display:flex;flex-direction:column;gap:10px;}
+  .field-label{font-family:var(--font-display);font-size:14px;font-weight:500;}
+
+  /* INPUTS */
+  .input-with-label{display:flex;flex-direction:column;gap:8px;}
+  .input-with-label .helper{font-size:12px;color:var(--text-faint);}
+  .input-row{display:flex;align-items:center;gap:20px;}
+  input[type=range]{flex:1;-webkit-appearance:none;appearance:none;height:4px;border-radius:2px;background:var(--border);outline:none;}
+  input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;appearance:none;width:18px;height:18px;border-radius:50%;background:var(--gold-bright);border:3px solid var(--bg);box-shadow:0 0 0 1px var(--gold);cursor:pointer;}
+  input[type=range]::-moz-range-thumb{width:18px;height:18px;border-radius:50%;background:var(--gold-bright);border:3px solid var(--bg);box-shadow:0 0 0 1px var(--gold);cursor:pointer;}
+  .mini-input{font-family:var(--font-mono);background:var(--surface-2);border:1px solid var(--border);color:var(--text);border-radius:8px;padding:11px 12px;font-size:15px;width:130px;text-align:right;}
+  .mini-input:focus{outline:none;border-color:var(--gold);}
+  .profit-value-input{font-family:var(--font-mono);font-size:24px;font-weight:500;color:var(--gold-live);background:var(--surface-2);border:1px solid var(--border);border-radius:8px;padding:8px 14px;width:150px;text-align:right;}
+  .profit-value-input:focus{outline:none;border-color:var(--gold);}
+
+  .fastpass-inputs{margin-top:26px;padding-top:22px;border-top:1px solid var(--border-soft);display:grid;grid-template-columns:1fr 1fr;gap:24px;}
+  @media (max-width:640px){.fastpass-inputs{grid-template-columns:1fr;}}
+  .hidden{display:none !important;}
+
+  .ratio-readout{display:inline-flex;align-items:center;gap:8px;margin-top:12px;font-family:var(--font-mono);font-size:13px;padding:9px 13px;border-radius:8px;background:var(--surface-2);border:1px solid var(--border-soft);}
+  .ratio-readout.pass{color:var(--gold-bright);border-color:var(--gold-dim);}
+  .ratio-readout.fail{color:var(--fail);}
+
+  /* RUNWAY */
+  .runway-track{position:relative;height:56px;border-radius:10px;overflow:hidden;display:flex;border:1px solid var(--border);margin-top:8px;}
+  .zone{position:relative;display:flex;flex-direction:column;justify-content:center;padding:0 16px;font-family:var(--font-mono);transition:all .3s ease;}
+  .zone-5050{background-color:#1E1B12;width:50%;}
+  .zone-8020{background-color:#241E0F;width:50%;border-left:1px dashed var(--gold-dim);}
+  .zone .zone-rate{font-size:15px;font-weight:600;color:var(--text);}
+  .zone .zone-name{font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:var(--text-faint);}
+  .zone.is-active{background-color:#2A2211;}
+  .zone.is-active .zone-rate{color:var(--gold-bright);}
+  .zone.is-dim{opacity:0.4;}
+  .marker{position:absolute;top:-8px;width:2px;height:72px;background:var(--gold-live);box-shadow:0 0 8px 1px rgba(252,239,201,0.6);transition:left .25s ease;}
+  .marker::after{content:'YOU';position:absolute;top:-20px;left:50%;transform:translateX(-50%);font-family:var(--font-mono);font-size:9px;letter-spacing:.06em;color:var(--gold-live);background:var(--bg);padding:2px 5px;border-radius:4px;border:1px solid var(--gold-dim);white-space:nowrap;}
+  .runway-scale{display:flex;justify-content:space-between;font-family:var(--font-mono);font-size:11px;color:var(--text-faint);margin-top:8px;}
+  .runway-scale .mid{color:var(--gold);}
+  .runway-footnote{font-size:13px;color:var(--text-dim);margin-top:18px;line-height:1.6;}
+  .runway-footnote strong{color:var(--text);font-weight:500;}
+
+  /* PAYOUT PANEL */
+  .payout-panel{display:grid;grid-template-columns:1fr 1fr;gap:32px;padding:32px;border-color:var(--gold-dim);}
+  @media (max-width:720px){.payout-panel{grid-template-columns:1fr;}}
+  .big-figure{font-family:var(--font-mono);font-size:44px;font-weight:600;color:var(--gold-live);line-height:1;margin:6px 0 8px;}
+  .big-figure .strike{display:block;font-size:16px;font-weight:400;color:var(--text-faint);text-decoration:line-through;text-decoration-color:var(--text-faint);margin-bottom:6px;}
+  .figure-label{font-size:13px;color:var(--text-dim);margin-bottom:4px;}
+  .panel-right p{font-size:14px;line-height:1.7;color:var(--text-dim);margin:0 0 14px;}
+  .panel-right p strong{color:var(--text);font-weight:500;}
+  .tier-table{width:100%;border-collapse:collapse;font-family:var(--font-mono);font-size:13px;margin-top:4px;}
+  .tier-table td{padding:9px 0;border-bottom:1px solid var(--border-soft);color:var(--text-dim);}
+  .tier-table tr:last-child td{border-bottom:none;}
+  .tier-table td:last-child{text-align:right;color:var(--text);}
+  .tier-table tr.active-row td{color:var(--gold-bright);}
+  .tier-table tr.active-row td:last-child{color:var(--gold-live);font-weight:600;}
+
+  /* ELIGIBILITY */
+  .eligibility-card{display:flex;gap:36px;align-items:center;flex-wrap:wrap;}
+  .ring-wrap{position:relative;width:150px;height:150px;flex-shrink:0;}
+  .ring-wrap svg{transform:rotate(-90deg);width:150px;height:150px;}
+  .ring-track{fill:none;stroke:var(--border);stroke-width:10;}
+  .ring-progress{fill:none;stroke:var(--gold-bright);stroke-width:10;stroke-linecap:round;transition:stroke-dashoffset .4s ease;}
+  .ring-label{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;}
+  .ring-label .pct{font-family:var(--font-mono);font-size:28px;font-weight:600;color:var(--gold-live);}
+  .ring-label .pct-sub{font-size:9px;color:var(--text-faint);text-transform:uppercase;letter-spacing:.06em;text-align:center;margin-top:2px;}
+  .checklist{flex:1;min-width:240px;display:flex;flex-direction:column;gap:14px;}
+  .checklist-title{font-family:var(--font-display);font-size:15px;font-weight:500;margin-bottom:2px;}
+  .check-item{display:flex;align-items:flex-start;gap:10px;font-size:13px;color:var(--text-dim);}
+  .check-item .mark{width:18px;height:18px;border-radius:50%;flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:11px;margin-top:1px;border:1px solid var(--border);color:var(--text-faint);}
+  .check-item.met .mark{background:var(--gold);border-color:var(--gold);color:#161206;}
+  .check-item.met{color:var(--text);}
+  .check-item .detail{font-family:var(--font-mono);font-size:12px;color:var(--text-faint);display:block;margin-top:2px;}
+
+  /* COMPARISON */
+  .compare-strip{display:flex;gap:16px;flex-wrap:wrap;}
+  .compare-card{flex:1;min-width:220px;background:var(--surface-2);border:1px solid var(--border-soft);border-radius:var(--radius-sm);padding:18px 20px;}
+  .compare-card .plan-name{font-family:var(--font-display);font-size:14px;font-weight:600;margin-bottom:4px;}
+  .compare-card .plan-desc{font-size:12px;color:var(--text-faint);margin-bottom:14px;}
+  .compare-card .plan-figure{font-family:var(--font-mono);font-size:22px;color:var(--text);}
+  .compare-card .plan-figure span{font-size:12px;color:var(--text-faint);display:block;margin-top:2px;}
+
+  /* MILESTONE */
+  .bar-track{height:8px;border-radius:4px;background:var(--surface-2);border:1px solid var(--border-soft);overflow:hidden;margin:14px 0 8px;}
+  .bar-fill{height:100%;background:linear-gradient(90deg,var(--gold-dim),var(--gold-bright));transition:width .3s ease;}
+  .bar-label{display:flex;justify-content:space-between;font-family:var(--font-mono);font-size:12px;color:var(--text-dim);}
+  .tag-single-source{display:inline-block;font-family:var(--font-mono);font-size:10px;letter-spacing:.05em;text-transform:uppercase;color:var(--text-faint);border:1px dashed var(--border);padding:3px 8px;border-radius:6px;margin-top:14px;}
+  .milestone-card p{font-size:13px;line-height:1.7;color:var(--text-dim);margin:14px 0 0;}
+
+  /* WORKED EXAMPLE */
+  .worked-example .eyebrow{color:var(--text-faint);}
+  .worked-example p{font-size:14px;line-height:1.75;color:var(--text-dim);margin:0 0 12px;}
+  .worked-example p strong{color:var(--text);font-weight:500;}
+  .math-line{font-family:var(--font-mono);font-size:13px;color:var(--gold-bright);background:var(--surface-2);border:1px solid var(--border-soft);border-radius:8px;padding:12px 16px;margin-top:14px;}
+
+  /* NOTES */
+  .notes-card ul{margin:0;padding-left:18px;color:var(--text-dim);font-size:13px;line-height:1.9;}
+  .notes-card li strong{color:var(--text);font-weight:500;}
+
+  footer{margin-top:56px;padding-top:24px;border-top:1px solid var(--border-soft);}
+  footer p{font-size:12px;color:var(--text-faint);line-height:1.6;max-width:74ch;}
+</style>
+</head>
+<body>
+<div class="page">
+
+  <div class="nav">
+    <div class="brand"><svg viewBox="0 0 24 24" fill="none"><path d="M13 2L4 14h6l-1 8 9-12h-6l1-8z" fill="#D8A54A"/></svg>SmartPropFirm</div>
+    <div class="nav-links"><span>Firms</span><span>Compare</span><span>Tools</span><span>Rewards</span></div>
+  </div>
+
+  <div class="breadcrumb">Tools / Funded Calculator</div>
+  <div class="chip">Firm: <strong>TradeDay</strong></div>
+
+  <h1>Your next payout isn't <span class="accent">one flat number.</span></h1>
+  <p class="lede">TradeDay's payout math changes by program, account size, and profit tier — and Fast Pass adds a consistency rule and trading-day requirement that Quick Pay doesn't have. Set your numbers below to see exactly where you stand.</p>
+
+  <!-- SETUP -->
+  <div class="card">
+    <span class="eyebrow">Your setup</span>
+    <div class="setup-row">
+      <div class="field-group">
+        <span class="field-label">Program</span>
+        <div class="segmented" id="programToggle">
+          <button data-value="quickpay" class="active">Quick Pay</button>
+          <button data-value="fastpass">Fast Pass</button>
+        </div>
+      </div>
+      <div class="field-group">
+        <span class="field-label">Account size</span>
+        <div class="segmented" id="sizeToggle">
+          <button data-value="50000" class="active">$50,000</button>
+          <button data-value="100000">$100,000</button>
+          <button data-value="150000">$150,000</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- PROFIT + FAST PASS INPUTS -->
+  <div class="card">
+    <span class="eyebrow">Your numbers</span>
+    <div class="input-with-label">
+      <label class="field-label">Current net profit in this account</label>
+      <div class="input-row">
+        <input type="range" id="profitSlider" min="0" max="25000" step="50" value="3000">
+        <input type="number" id="profitNumberInput" class="profit-value-input" value="3000" step="50">
+      </div>
+      <span class="helper">Drag the bar or type an exact figure — both stay in sync.</span>
+    </div>
+
+    <div class="fastpass-inputs" id="fastPassInputs">
+      <div class="input-with-label">
+        <label class="field-label">Largest single trading day's profit</label>
+        <input type="number" id="largestDayInput" class="mini-input" value="0" step="10" style="width:100%;text-align:left;">
+        <span class="helper">Used to check the 45% consistency rule.</span>
+        <div class="ratio-readout" id="ratioReadout">Largest day is 0% of total profit</div>
+      </div>
+      <div class="input-with-label">
+        <label class="field-label">Profitable trading days logged</label>
+        <input type="number" id="daysInput" class="mini-input" value="0" min="0" max="15" style="width:100%;text-align:left;">
+        <span class="helper" id="dailyMinHelper">Each day must clear $150 to count, on a $50,000 account.</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- RUNWAY (Quick Pay only — Fast Pass has no tiers to visualize) -->
+  <div class="card" id="runwayCard">
+    <span class="eyebrow" id="runwayEyebrow">Split curve — Quick Pay Funded Sim</span>
+    <div class="runway-track">
+      <div class="zone zone-5050" id="zone5050">
+        <span class="zone-rate">50 / 50</span>
+        <span class="zone-name">$0 – $4,000</span>
+      </div>
+      <div class="zone zone-8020" id="zone8020">
+        <span class="zone-rate">80 / 20</span>
+        <span class="zone-name">$4,000+</span>
+      </div>
+      <div class="marker" id="marker" style="left:12%"></div>
+    </div>
+    <div class="runway-scale">
+      <span>$0</span><span class="mid">$4,000 threshold</span><span>$8,000+</span>
+    </div>
+    <div class="runway-footnote" id="runwayFootnote"></div>
+  </div>
+
+  <div class="card hidden" id="flatSplitNote">
+    <span class="eyebrow">Split — Fast Pass Funded Sim</span>
+    <p style="font-size:14px;line-height:1.7;color:var(--text-dim);margin:0;">Fast Pass runs a flat <strong style="color:var(--text);">80/20</strong> split from the first dollar of profit. There's no threshold to cross and no curve to plot — the number below doesn't move as your profit grows.</p>
+  </div>
+
+  <!-- PAYOUT PANEL -->
+  <div class="card payout-panel">
+    <div class="panel-left">
+      <span class="eyebrow">Next payout · $250 minimum</span>
+      <div class="big-figure">
+        <span class="strike" id="flatFigure">$312.50 flat estimate</span>
+        <span id="requiredFigure">$500.00</span>
+      </div>
+      <div class="figure-label">actual net profit required at your current tier</div>
+    </div>
+    <div class="panel-right">
+      <p id="payoutWhyText"></p>
+      <table class="tier-table" id="tierTable">
+        <tr id="rowTier1"><td>$0 – $4,000 net profit</td><td>50 / 50 split · $500.00 needed</td></tr>
+        <tr id="rowTier2"><td>$4,000+ net profit</td><td>80 / 20 split · $312.50 needed</td></tr>
+      </table>
+    </div>
+  </div>
+
+  <!-- ELIGIBILITY -->
+  <div class="card eligibility-card">
+    <div class="ring-wrap">
+      <svg viewBox="0 0 150 150">
+        <circle class="ring-track" cx="75" cy="75" r="60"/>
+        <circle class="ring-progress" id="ringProgress" cx="75" cy="75" r="60" stroke-dasharray="376.99" stroke-dashoffset="376.99"/>
+      </svg>
+      <div class="ring-label">
+        <span class="pct" id="ringPct">0%</span>
+        <span class="pct-sub">eligible</span>
+      </div>
+    </div>
+    <div class="checklist">
+      <div class="checklist-title" id="eligibilityStatus">Not yet eligible</div>
+      <div id="checklistItems"></div>
+    </div>
+  </div>
+
+  <!-- COMPARISON -->
+  <div class="compare-strip">
+    <div class="compare-card">
+      <div class="plan-name">Fast Pass Funded Sim</div>
+      <div class="plan-desc">Flat 80/20, 45% consistency, 5 profitable days per payout</div>
+      <div class="plan-figure">$312.50<span>needed for a $250 payout, at any profit level</span></div>
+    </div>
+    <div class="compare-card">
+      <div class="plan-name">Quick Pay Funded Sim</div>
+      <div class="plan-desc">Tiered 50/50 → 80/20, no consistency rule, no minimum days</div>
+      <div class="plan-figure">$500 → $312.50<span>depending which side of $4,000 you're on</span></div>
+    </div>
+  </div>
+
+  <!-- WORKED EXAMPLES -->
+  <div class="card worked-example" id="exampleQuickPay">
+    <span class="eyebrow">Worked example — crossing the line</span>
+    <p>Splits are calculated on <strong>current profit</strong>, so a single request can straddle both tiers. Say a trader on a $50,000 account has <strong>$6,000</strong> in net profit and requests <strong>$3,000</strong>.</p>
+    <p>The first $2,000 sits above the $4,000 line and pays at 80/20 — <strong>$1,600</strong> to the trader. The remaining $1,000 falls below the line and pays at 50/50 — <strong>$500</strong> to the trader. Total payout: <strong>$2,100</strong>, not $2,400.</p>
+    <div class="math-line">$2,000 × 0.80 = $1,600 &nbsp;+&nbsp; $1,000 × 0.50 = $500 &nbsp;=&nbsp; $2,100 received</div>
+  </div>
+
+  <div class="card worked-example hidden" id="exampleFastPass">
+    <span class="eyebrow">Worked example — consistency and trading days</span>
+    <p>On a $50,000 Fast Pass Funded Sim account, say a trader logs five trading days: $180, $210, $95, $260, and $190 — <strong>$935</strong> in total profit. Four of those days clear the $150 daily minimum; the $95 day doesn't count, so only <strong>4 of 5</strong> qualifying days are logged.</p>
+    <p>Their best day, $260, is <strong>27.8%</strong> of the $935 total — comfortably under the 45% consistency cap. The split itself isn't the blocker here: the missing fifth qualifying day is.</p>
+    <div class="math-line">$260 ÷ $935 = 27.8% consistency &nbsp;·&nbsp; 4 of 5 qualifying days logged</div>
+  </div>
+
+  <!-- FUNDED LIVE -->
+  <div class="card milestone-card">
+    <span class="eyebrow">Path to Funded Live</span>
+    <div class="input-with-label" style="margin-bottom:6px;">
+      <label class="field-label">Total already paid out from this account (lifetime)</label>
+      <input type="number" id="paidOutInput" class="mini-input" value="0" step="50" style="width:180px;">
+    </div>
+
+    <div id="qpMilestone">
+      <div class="bar-track"><div class="bar-fill" id="milestoneFill" style="width:0%"></div></div>
+      <div class="bar-label"><span id="milestoneCurrent">$3,000 gross profit</span><span>$10,000 milestone</span></div>
+      <p>Quick Pay accounts are reviewed for Funded Live at <strong>$10,000 gross profit</strong> — tracked separately on each funded account. Profit above that threshold isn't carried forward: once an account hits $10,000, it's reviewed for promotion and any excess is removed. Holding several Quick Pay accounts doesn't pool progress — each clears $10,000 on its own.</p>
+    </div>
+
+    <div id="fpMilestone" class="hidden">
+      <div class="input-with-label" style="margin:18px 0 6px;">
+        <label class="field-label">Payout requests taken on this account</label>
+        <input type="number" id="payoutsTakenInput" class="mini-input" value="0" min="0" max="10" style="width:180px;">
+      </div>
+      <div class="bar-track"><div class="bar-fill" id="milestoneFillFP" style="width:0%"></div></div>
+      <div class="bar-label"><span id="milestoneCurrentFP">0 of 5 payout requests</span><span>5th request triggers review</span></div>
+      <p>Fast Pass runs on an entirely different trigger: review for Funded Live happens at the <strong>5th payout request</strong>, not a profit figure. Profit and consistency still determine whether each request goes through — they just don't decide when the Funded Live review happens.</p>
+    </div>
+  </div>
+
+  <!-- NOTES -->
+  <div class="card notes-card">
+    <span class="eyebrow">Notes</span>
+    <ul id="quickPayNotes">
+      <li><strong>No consistency rule.</strong> Quick Pay Funded Sim has no daily profit cap once funded.</li>
+      <li><strong>No minimum trading days.</strong> Payouts are available from day one of funding, gated only by the $250 minimum request and current profit.</li>
+    </ul>
+    <ul id="fastPassNotes" class="hidden">
+      <li><strong>45% consistency rule.</strong> No single trading day may exceed 45% of total Funded Sim profit.</li>
+      <li><strong>5 profitable days required per payout.</strong> Each must clear the account size's daily minimum — $150 (50K), $200 (100K), or $250 (150K).</li>
+      <li><strong>Payout requests are capped per size.</strong> $1,500 (50K), $1,850 (100K), or $2,250 (150K) maximum per request.</li>
+    </ul>
+  </div>
+
+  <footer>
+    <p>Payout, consistency, and progression figures are drawn from TradeDay's published Quick Pay and Fast Pass Funded Sim policies as of August 2026. TradeDay rebuilt its account structure in May 2026, so older reviews and screenshots may describe a program that no longer exists. Rules are set by TradeDay and may change without notice.</p>
+  </footer>
+
+</div>
+
+<script>
+  const QP_THRESHOLD = 4000;
+  const TARGET_PAYOUT = 250;
+  const FP_CONSISTENCY_CAP = 45;
+  const FP_MIN_DAYS = 5;
+  const FP_DAILY_MIN = {50000:150, 100000:200, 150000:250};
+  const QP_FUNDED_LIVE_MILESTONE = 10000; // gross profit, tracked per account
+  const FP_FUNDED_LIVE_TRIGGER = 5; // payout request count, not a profit figure
+  const RUNWAY_SCALE_MAX = 8000;
+  const RING_CIRCUMFERENCE = 2 * Math.PI * 60;
+
+  const state = { program:'quickpay', size:50000, profit:3000, largestDay:0, days:0, paidOut:0, payoutsTaken:0 };
+
+  const el = (id) => document.getElementById(id);
+  const usd = (n) => n.toLocaleString('en-US', {style:'currency', currency:'USD'});
+  const usd0 = (n) => '$' + Math.round(n).toLocaleString('en-US');
+
+  function computeRequiredProfit(program, cp){
+    if (program === 'quickpay'){
+      if (cp <= QP_THRESHOLD) return TARGET_PAYOUT / 0.5;
+      const bandNet = (cp - QP_THRESHOLD) * 0.8;
+      if (TARGET_PAYOUT <= bandNet) return TARGET_PAYOUT / 0.8;
+      const remainder = TARGET_PAYOUT - bandNet;
+      return (cp - QP_THRESHOLD) + (remainder / 0.5);
+    }
+    return TARGET_PAYOUT / 0.8; // Fast Pass: flat split, always the same
+  }
+
+  function renderSetupToggles(){
+    document.querySelectorAll('#programToggle button').forEach(b=>{
+      b.classList.toggle('active', b.dataset.value === state.program);
+    });
+    document.querySelectorAll('#sizeToggle button').forEach(b=>{
+      b.classList.toggle('active', b.dataset.value === String(state.size));
+    });
+    el('fastPassInputs').classList.toggle('hidden', state.program !== 'fastpass');
+    el('dailyMinHelper').textContent = `Each day must clear $${FP_DAILY_MIN[state.size]} to count, on a $${state.size.toLocaleString()} account.`;
+  }
+
+  function renderRunway(){
+    const cp = state.profit;
+    const isQP = state.program === 'quickpay';
+
+    el('runwayCard').classList.toggle('hidden', !isQP);
+    el('flatSplitNote').classList.toggle('hidden', isQP);
+    if (!isQP) return; // nothing else to compute — flat split, no curve
+
+    const inFirstTier = cp <= QP_THRESHOLD;
+    el('zone5050').classList.toggle('is-active', inFirstTier);
+    el('zone5050').classList.toggle('is-dim', !inFirstTier);
+    el('zone8020').classList.toggle('is-active', !inFirstTier);
+    el('zone8020').classList.toggle('is-dim', inFirstTier);
+    el('runwayFootnote').innerHTML = inFirstTier
+      ? `You're in the <strong>50/50 zone</strong> — TradeDay keeps half of every dollar withdrawn here. $${(QP_THRESHOLD-cp).toLocaleString()} more in net profit crosses you into 80/20.`
+      : `You're in the <strong>80/20 zone</strong> — same rate as Fast Pass, on profit above $4,000.`;
+
+    const pct = Math.min(cp, RUNWAY_SCALE_MAX) / RUNWAY_SCALE_MAX * 100;
+    el('marker').style.left = pct + '%';
+  }
+
+  function renderPayoutPanel(){
+    const cp = state.profit;
+    const isQP = state.program === 'quickpay';
+    const required = computeRequiredProfit(state.program, cp);
+    el('requiredFigure').textContent = usd(required);
+
+    if (isQP){
+      const inFirstTier = cp <= QP_THRESHOLD;
+      el('flatFigure').style.display = inFirstTier ? 'block' : 'none';
+      el('payoutWhyText').innerHTML = `The <strong>$312.50</strong> figure shown for flat-split plans assumes 80/20 everywhere. Below $4,000 in this account, TradeDay pays 50/50 — so a $250 payout actually costs <strong>${usd(required)}</strong> in net profit here.`;
+      el('tierTable').classList.remove('hidden');
+      el('rowTier1').classList.toggle('active-row', inFirstTier);
+      el('rowTier2').classList.toggle('active-row', !inFirstTier);
+    } else {
+      el('flatFigure').style.display = 'none';
+      el('payoutWhyText').innerHTML = `Fast Pass runs a flat 80/20 split from day one, so <strong>$312.50</strong> is accurate at any profit level — the split was never the issue here. What actually gates a Fast Pass payout is the consistency rule and trading-day count on the right.`;
+      el('tierTable').innerHTML = '<tr class="active-row"><td>$0+ net profit</td><td>80 / 20 split · $312.50 needed</td></tr>';
+    }
+  }
+
+  function renderEligibility(){
+    const cp = state.profit;
+    const isQP = state.program === 'quickpay';
+    const required = computeRequiredProfit(state.program, cp);
+    const profitProgress = Math.max(0, Math.min(100, (cp/required)*100));
+    const profitMet = cp >= required;
+
+    let items = [
+      { label:'Enough net profit', met:profitMet, detail:`${usd(cp)} of ${usd(required)} required`, progress:profitProgress }
+    ];
+
+    let overall;
+    if (isQP){
+      overall = profitProgress;
+    } else {
+      const grossProfit = state.profit + state.paidOut;
+      const ratio = grossProfit > 0 ? (state.largestDay/grossProfit)*100 : 0;
+      const consistencyMet = ratio <= FP_CONSISTENCY_CAP;
+      const daysMet = state.days >= FP_MIN_DAYS;
+      const daysProgress = Math.max(0, Math.min(100, (state.days/FP_MIN_DAYS)*100));
+
+      items.push({ label:'Consistency ≤ 45%', met:consistencyMet, detail:`largest day is ${ratio.toFixed(1)}% of profit`, progress: consistencyMet ? 100 : 0 });
+      items.push({ label:'5 profitable trading days', met:daysMet, detail:`${state.days} of ${FP_MIN_DAYS} logged`, progress:daysProgress });
+
+      overall = items.reduce((sum,i)=>sum+i.progress,0) / items.length;
+    }
+
+    const allMet = items.every(i=>i.met);
+    el('eligibilityStatus').textContent = allMet ? 'Eligible for payout' : 'Not yet eligible';
+    el('eligibilityStatus').style.color = allMet ? 'var(--gold-live)' : 'var(--text)';
+
+    el('checklistItems').innerHTML = items.map(i => `
+      <div class="check-item ${i.met ? 'met':''}">
+        <span class="mark">${i.met ? '✓':''}</span>
+        <span>${i.label}<span class="detail">${i.detail}</span></span>
+      </div>
+    `).join('');
+
+    const offset = RING_CIRCUMFERENCE * (1 - overall/100);
+    el('ringProgress').setAttribute('stroke-dasharray', RING_CIRCUMFERENCE.toFixed(2));
+    el('ringProgress').setAttribute('stroke-dashoffset', offset.toFixed(2));
+    el('ringPct').textContent = Math.round(overall) + '%';
+  }
+
+  function renderMilestone(){
+    const isQP = state.program === 'quickpay';
+    el('qpMilestone').classList.toggle('hidden', !isQP);
+    el('fpMilestone').classList.toggle('hidden', isQP);
+
+    if (isQP){
+      const grossProfit = state.profit + state.paidOut;
+      const pct = Math.max(0, Math.min(100, (grossProfit/QP_FUNDED_LIVE_MILESTONE)*100));
+      el('milestoneFill').style.width = pct + '%';
+      el('milestoneCurrent').textContent = `${usd0(grossProfit)} gross profit`;
+    } else {
+      const pct = Math.max(0, Math.min(100, (state.payoutsTaken/FP_FUNDED_LIVE_TRIGGER)*100));
+      el('milestoneFillFP').style.width = pct + '%';
+      el('milestoneCurrentFP').textContent = `${state.payoutsTaken} of ${FP_FUNDED_LIVE_TRIGGER} payout requests`;
+    }
+  }
+
+  function renderWorkedExample(){
+    el('exampleQuickPay').classList.toggle('hidden', state.program !== 'quickpay');
+    el('exampleFastPass').classList.toggle('hidden', state.program !== 'fastpass');
+  }
+
+  function renderRatioReadout(){
+    const grossProfit = state.profit + state.paidOut;
+    const ratio = grossProfit > 0 ? (state.largestDay/grossProfit)*100 : 0;
+    const pass = ratio <= FP_CONSISTENCY_CAP;
+    const readout = el('ratioReadout');
+    readout.textContent = `Largest day is ${ratio.toFixed(1)}% of total profit — ${pass ? 'passes' : 'fails'} the 45% cap`;
+    readout.classList.toggle('pass', pass);
+    readout.classList.toggle('fail', !pass);
+  }
+
+  function renderNotes(){
+    el('quickPayNotes').classList.toggle('hidden', state.program !== 'quickpay');
+    el('fastPassNotes').classList.toggle('hidden', state.program !== 'fastpass');
+  }
+
+  function renderAll(){
+    renderSetupToggles();
+    renderRunway();
+    renderPayoutPanel();
+    renderEligibility();
+    renderMilestone();
+    renderWorkedExample();
+    renderRatioReadout();
+    renderNotes();
+  }
+
+  // --- wiring ---
+  document.querySelectorAll('#programToggle button').forEach(btn=>{
+    btn.addEventListener('click', () => { state.program = btn.dataset.value; renderAll(); });
+  });
+  document.querySelectorAll('#sizeToggle button').forEach(btn=>{
+    btn.addEventListener('click', () => { state.size = parseInt(btn.dataset.value,10); renderAll(); });
+  });
+
+  const profitSlider = el('profitSlider');
+  const profitNumberInput = el('profitNumberInput');
+  profitSlider.addEventListener('input', () => {
+    state.profit = parseInt(profitSlider.value,10);
+    profitNumberInput.value = state.profit;
+    renderAll();
+  });
+  profitNumberInput.addEventListener('input', () => {
+    const v = parseInt(profitNumberInput.value,10) || 0;
+    state.profit = v;
+    profitSlider.value = Math.min(v, parseInt(profitSlider.max,10));
+    renderAll();
+  });
+
+  el('largestDayInput').addEventListener('input', (e)=>{ state.largestDay = parseInt(e.target.value,10) || 0; renderAll(); });
+  el('daysInput').addEventListener('input', (e)=>{ state.days = parseInt(e.target.value,10) || 0; renderAll(); });
+  el('paidOutInput').addEventListener('input', (e)=>{ state.paidOut = parseInt(e.target.value,10) || 0; renderAll(); });
+  el('payoutsTakenInput').addEventListener('input', (e)=>{ state.payoutsTaken = parseInt(e.target.value,10) || 0; renderAll(); });
+
+  renderAll();
+</script>
+</body>
+</html>
