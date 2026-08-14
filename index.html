@@ -214,7 +214,7 @@
   <div class="chip">Firm: <strong>TradeDay</strong></div>
 
   <h1>Your next payout isn't <span class="accent">one flat number.</span></h1>
-  <p class="lede">TradeDay's payout math changes by program, account size, and profit tier — and Fast Pass adds a consistency rule and trading-day requirement that Quick Pay doesn't have. Set your numbers below to see exactly where you stand.</p>
+  <p class="lede">TradeDay's payout math changes by program, account size, and profit tier — and Fast Pass adds a consistency rule and 5 profitable trading-day requirement that Quick Pay doesn't have. Set your numbers below to see exactly where you stand.</p>
 
   <!-- SETUP -->
   <div class="card">
@@ -223,7 +223,8 @@
       <div class="field-group">
         <span class="field-label">Program</span>
         <div class="segmented" id="programToggle">
-          <button data-value="quickpay" class="active">Quick Pay</button>
+          <button data-value="quickpay_intraday" class="active">Quick Pay Intraday</button>
+          <button data-value="quickpay_eod">Quick Pay EOD</button>
           <button data-value="fastpass">Fast Pass</button>
         </div>
       </div>
@@ -336,7 +337,7 @@
     </div>
     <div class="compare-card">
       <div class="plan-name">Quick Pay Funded Sim</div>
-      <div class="plan-desc">Tiered 50/50 → 80/20, no consistency rule, no minimum days</div>
+      <div class="plan-desc">Tiered 50/50 → 80/20, no consistency rule, no 5-day requirement</div>
       <div class="plan-figure">$500 → $312.50<span>depending which side of $4,000 you're on</span></div>
     </div>
   </div>
@@ -412,14 +413,14 @@
   const RUNWAY_SCALE_MAX = 8000;
   const RING_CIRCUMFERENCE = 2 * Math.PI * 60;
 
-  const state = { program:'quickpay', size:50000, profit:3000, largestDay:0, days:0, paidOut:0, payoutsTaken:0 };
+  const state = { program:'quickpay_intraday', size:50000, profit:3000, largestDay:0, days:0, paidOut:0, payoutsTaken:0 };
 
   const el = (id) => document.getElementById(id);
   const usd = (n) => n.toLocaleString('en-US', {style:'currency', currency:'USD'});
   const usd0 = (n) => '$' + Math.round(n).toLocaleString('en-US');
 
   function computeRequiredProfit(program, cp){
-    if (program === 'quickpay'){
+    if (program === 'quickpay_intraday' || program === 'quickpay_eod'){
       if (cp <= QP_THRESHOLD) return TARGET_PAYOUT / 0.5;
       const bandNet = (cp - QP_THRESHOLD) * 0.8;
       if (TARGET_PAYOUT <= bandNet) return TARGET_PAYOUT / 0.8;
@@ -440,9 +441,20 @@
     el('dailyMinHelper').textContent = `Each day must clear $${FP_DAILY_MIN[state.size]} to count, on a $${state.size.toLocaleString()} account.`;
   }
 
+  function renderProgramLabels(){
+    const label = state.program === 'quickpay_intraday'
+      ? 'Quick Pay Intraday'
+      : state.program === 'quickpay_eod'
+        ? 'Quick Pay End of Day'
+        : 'Fast Pass';
+
+    const chip = document.querySelector('.chip strong');
+    if (chip) chip.textContent = `TradeDay · ${label}`;
+  }
+
   function renderRunway(){
     const cp = state.profit;
-    const isQP = state.program === 'quickpay';
+    const isQP = state.program === 'quickpay_intraday' || state.program === 'quickpay_eod';
 
     el('runwayCard').classList.toggle('hidden', !isQP);
     el('flatSplitNote').classList.toggle('hidden', isQP);
@@ -463,7 +475,7 @@
 
   function renderPayoutPanel(){
     const cp = state.profit;
-    const isQP = state.program === 'quickpay';
+    const isQP = state.program === 'quickpay_intraday' || state.program === 'quickpay_eod';
     const required = computeRequiredProfit(state.program, cp);
     el('requiredFigure').textContent = usd(required);
 
@@ -483,7 +495,7 @@
 
   function renderEligibility(){
     const cp = state.profit;
-    const isQP = state.program === 'quickpay';
+    const isQP = state.program === 'quickpay_intraday' || state.program === 'quickpay_eod';
     const required = computeRequiredProfit(state.program, cp);
     const profitProgress = Math.max(0, Math.min(100, (cp/required)*100));
     const profitMet = cp >= required;
@@ -526,7 +538,7 @@
   }
 
   function renderMilestone(){
-    const isQP = state.program === 'quickpay';
+    const isQP = state.program === 'quickpay_intraday' || state.program === 'quickpay_eod';
     el('qpMilestone').classList.toggle('hidden', !isQP);
     el('fpMilestone').classList.toggle('hidden', isQP);
 
@@ -564,6 +576,7 @@
 
   function renderAll(){
     renderSetupToggles();
+    renderProgramLabels();
     renderRunway();
     renderPayoutPanel();
     renderEligibility();
